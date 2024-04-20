@@ -1,6 +1,7 @@
 package kava
 
 import (
+	"embed"
 	"fmt"
 	"image"
 	"image/color"
@@ -16,11 +17,16 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
+//go:embed RedditMono-ExtraBold.ttf
+var fontData []byte
+
 const fontFileName = "RedditMono-ExtraBold.ttf"
 
 type Generator struct {
 	font *truetype.Font
 }
+
+var _ = embed.FS{}
 
 type GenOpts struct {
 	Dest      io.Writer
@@ -41,12 +47,18 @@ func New(ttfFile ...string) (*Generator, error) {
 	} else {
 		ff = fontFileName
 	}
-	fontData, err := os.ReadFile(ff)
+	fd, err := os.ReadFile(ff)
 	if err != nil {
 		fmt.Println("Error reading font file:", err)
 		return nil, err
 	}
-	fnt, err := freetype.ParseFont(fontData)
+	var fnt *truetype.Font
+	if len(ttfFile) > 0 {
+		fnt, err = freetype.ParseFont(fd)
+	} else {
+		fnt, err = freetype.ParseFont(fontData)
+	}
+
 	if err != nil {
 		fmt.Println("Error parsing font:", err)
 		return nil, err
