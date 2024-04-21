@@ -1,7 +1,8 @@
 package kava
 
 import (
-	"embed"
+	"bytes"
+	_ "embed"
 	"fmt"
 	"image"
 	"image/color"
@@ -10,6 +11,8 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/golang/freetype"
 	"github.com/golang/freetype/truetype"
@@ -23,12 +26,11 @@ var fontData []byte
 const fontFileName = "RedditMono-ExtraBold.ttf"
 
 type Generator struct {
-	font *truetype.Font
+	font  *truetype.Font
+	cache *LRUCache
 }
 
-var _ = embed.FS{}
-
-type GenOpts struct {
+type GenerateOpts struct {
 	Dest      io.Writer
 	Text      string
 	Width     int
@@ -39,31 +41,42 @@ type GenOpts struct {
 	OffsetY   int
 }
 
-func New(ttfFile ...string) (*Generator, error) {
+type GeneratorOpts struct {
+	TtfFile            string
+	FlushCacheEverySec int64
+	CacheSize          int64
+}
+
+func New(opts GeneratorOpts) (*Generator, error) {
 	ig := &Generator{}
 	var ff string
-	if len(ttfFile) > 0 {
-		ff = ttfFile[0]
+	if opts.TtfFile != "" {
+		ff = opts.TtfFile
 	} else {
 		ff = fontFileName
 	}
-	fd, err := os.ReadFile(ff)
-	if err != nil {
-		fmt.Println("Error reading font file:", err)
-		return nil, err
-	}
 	var fnt *truetype.Font
-	if len(ttfFile) > 0 {
+	var err error
+	if opts.TtfFile != "" {
+		var fd []byte
+		fd, err = os.ReadFile(ff)
+		if err != nil {
+			fmt.Println("Error reading font file:", err)
+			return nil, err
+		}
 		fnt, err = freetype.ParseFont(fd)
 	} else {
 		fnt, err = freetype.ParseFont(fontData)
 	}
-
 	if err != nil {
 		fmt.Println("Error parsing font:", err)
 		return nil, err
 	}
 	ig.font = fnt
+	if opts.CacheSize == 0 {
+		opts.CacheSize = 20
+	}
+	ig.cache = NewLRUCache(opts.CacheSize, opts.FlushCacheEverySec)
 	return ig, nil
 }
 
@@ -80,7 +93,7 @@ func (ig *Generator) GetFont() *truetype.Font {
 	return ig.font
 }
 
-func (ig *Generator) Generate(opts GenOpts) error {
+func (ig *Generator) Generate(opts GenerateOpts) error {
 	var (
 		fonts, width, height int
 		textColor, bgColor   color.Color
@@ -110,10 +123,32 @@ func (ig *Generator) Generate(opts GenOpts) error {
 	} else {
 		bgColor = randomColor()
 	}
+
+	// Check the cache first
+	cacheKey := opts.Text
+	if cachedImage, exists := ig.cache.Get(cacheKey); exists {
+		opts.Dest.Write(cachedImage) // Serve the image from cache
+		return nil
+	}
+
+	// Generate the image
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{C: bgColor}, image.Point{}, draw.Src)
 	drawText(img, opts.Text, ig.font, fonts, textColor, opts.OffsetY)
-	return png.Encode(opts.Dest, img)
+
+	// Encode the image to PNG
+	var imgBuffer bytes.Buffer
+	err := png.Encode(&imgBuffer, img)
+	if err != nil {
+		return err
+	}
+
+	// Cache the generated image
+	ig.cache.Put(cacheKey, imgBuffer.Bytes())
+
+	// Write the image to the destination writer
+	opts.Dest.Write(imgBuffer.Bytes())
+	return nil
 }
 
 // drawText draws the initials onto the image using the specified font and size
@@ -136,4 +171,80 @@ func drawText(img *image.RGBA, text string, fff *truetype.Font, fontSize int, c 
 		Y: fixed.I(y + fontSize),
 	}
 	d.DrawString(text)
+}
+
+// LRUCache represents an LRU cache limited by memory size
+type LRUCache struct {
+	memLimit int64
+	currSize int64
+	cache    map[string][]byte
+	mutex    sync.RWMutex
+}
+
+// NewLRUCache creates a new LRUCache with the given memory limit in megabytes
+func NewLRUCache(memLimitMB int64, flushEverySec ...int64) *LRUCache {
+	memLimitBytes := memLimitMB * 1024 * 1024 // Convert megabytes to bytes
+
+	cache := &LRUCache{
+		memLimit: memLimitBytes,
+		cache:    make(map[string][]byte),
+	}
+	if len(flushEverySec) > 0 && flushEverySec[0] > 0 {
+		go cache.periodicFlush(flushEverySec[0])
+	}
+	return cache
+}
+
+func (c *LRUCache) periodicFlush(intervalSec int64) {
+	ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		c.Flush()
+	}
+}
+
+// Put inserts a value into the cache
+func (c *LRUCache) Put(key string, value []byte) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	// Check if adding this item exceeds the memory limit
+	itemSize := int64(len(value))
+	if c.currSize+itemSize > c.memLimit {
+		// Evict older items until memory usage falls below the limit
+		for c.currSize+itemSize > c.memLimit {
+			// Evict the oldest item
+			for k, v := range c.cache {
+				delete(c.cache, k)
+				c.currSize -= int64(len(v))
+				break
+			}
+		}
+	}
+
+	// Add the new item
+	c.cache[key] = value
+	c.currSize += itemSize
+}
+
+// Get retrieves a value from the cache
+func (c *LRUCache) Get(key string) ([]byte, bool) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	if val, exists := c.cache[key]; exists {
+		return val, true
+	}
+	return nil, false
+}
+
+// Flush clears the cache
+func (c *LRUCache) Flush() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.cache = make(map[string][]byte)
+	c.currSize = 0
 }
