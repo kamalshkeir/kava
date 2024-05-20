@@ -32,6 +32,10 @@ func Handler(gen *Generator, genOpts GenerateOpts) http.HandlerFunc {
 			}
 		}
 
+		if genOpts.Dest == nil {
+			genOpts.Dest = w
+		}
+
 		if err := gen.Generate(genOpts); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
