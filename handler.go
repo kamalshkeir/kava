@@ -11,6 +11,7 @@ func Handler(gen *Generator, genOpts GenerateOpts) http.HandlerFunc {
 		if initials == "" {
 			initials = r.Context().Value(gen.queryParamName).(string)
 		}
+		genOpts.Dest = w
 		// Generate the image
 		if len(initials) < 4 {
 			genOpts.Text = strings.ToUpper(initials)
@@ -30,10 +31,6 @@ func Handler(gen *Generator, genOpts GenerateOpts) http.HandlerFunc {
 			} else {
 				genOpts.Text = "--"
 			}
-		}
-
-		if genOpts.Dest == nil {
-			genOpts.Dest = w
 		}
 
 		if err := gen.Generate(genOpts); err != nil {
