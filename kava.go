@@ -26,8 +26,9 @@ var fontData []byte
 const fontFileName = "RedditMono-ExtraBold.ttf"
 
 type Generator struct {
-	font  *truetype.Font
-	cache *LRUCache
+	font           *truetype.Font
+	cache          *LRUCache
+	queryParamName string
 }
 
 type GenerateOpts struct {
@@ -43,6 +44,7 @@ type GenerateOpts struct {
 
 type GeneratorOpts struct {
 	TtfFile            string
+	QueryParamName     string
 	FlushCacheEverySec int64
 	CacheSize          int64
 }
@@ -76,6 +78,7 @@ func New(opts GeneratorOpts) (*Generator, error) {
 	if opts.CacheSize == 0 {
 		opts.CacheSize = 20
 	}
+	ig.queryParamName = opts.QueryParamName
 	ig.cache = NewLRUCache(opts.CacheSize, opts.FlushCacheEverySec)
 	return ig, nil
 }
