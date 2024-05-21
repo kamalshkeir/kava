@@ -8,7 +8,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"path/filepath"
+	"strings"
 
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/draw"
@@ -45,18 +45,20 @@ func ResizeImage(opt *ResizeOption) (string, []byte, error) {
 		opt.Quality = QualityMedium
 	}
 
-	img, fname, err := image.Decode(opt.ImageToResize)
+	img, ext, err := image.Decode(opt.ImageToResize)
 	if err != nil {
 		var bbr []byte
 		_, err := opt.ImageToResize.Read(bbr)
 		if err == nil {
-			return fname, bbr, fmt.Errorf("decode error: %v", err)
-		} else {
-			return fname, nil, fmt.Errorf("decode error: %v", err)
+			return ext, bbr, fmt.Errorf("decode error: %v", err)
+		} else if err != io.EOF {
+			return ext, nil, fmt.Errorf("decode error: %v", err)
 		}
 	}
 	if opt.Ext == "" {
-		opt.Ext = filepath.Ext(fname)
+		opt.Ext = ext
+	} else {
+		opt.Ext = strings.TrimSuffix(opt.Ext, ".")
 	}
 	// Calculate new dimensions while preserving aspect ratio
 	originalWidth, originalHeight := img.Bounds().Dx(), img.Bounds().Dy()
@@ -83,15 +85,15 @@ func ResizeImage(opt *ResizeOption) (string, []byte, error) {
 	// Encode the resized image back to JPEG
 	var out bytes.Buffer
 	switch opt.Ext {
-	case ".png":
+	case "png":
 		err = png.Encode(&out, resizedImg)
-	case ".jpg", ".jpeg":
+	case "jpg", "jpeg":
 		err = jpeg.Encode(&out, resizedImg, nil)
-	case ".gif":
+	case "gif":
 		err = gif.Encode(&out, resizedImg, nil)
-	case ".bmp":
+	case "bmp":
 		err = bmp.Encode(&out, resizedImg)
-	case ".tiff", ".tif":
+	case "tiff", "tif":
 		err = tiff.Encode(&out, resizedImg, nil)
 	default:
 		err = fmt.Errorf("encode error: Unsupported image type %s", opt.Ext)
@@ -99,13 +101,13 @@ func ResizeImage(opt *ResizeOption) (string, []byte, error) {
 	}
 	if err != nil {
 		var bbr []byte
-		_, err := opt.ImageToResize.Read(bbr)
-		if err == nil {
-			return fname, bbr, err
-		} else {
-			return fname, nil, err
+		_, errR := opt.ImageToResize.Read(bbr)
+		if errR == nil {
+			return opt.Ext, bbr, err
+		} else if errR != io.EOF {
+			return opt.Ext, nil, err
 		}
 	}
 
-	return fname, out.Bytes(), nil
+	return opt.Ext, out.Bytes(), nil
 }
