@@ -8,7 +8,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"strings"
 
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/draw"
@@ -28,10 +27,9 @@ type ResizeOption struct {
 	ImageToResize io.Reader
 	ResizeWidth   int
 	Quality       Quality
-	Ext           string
 }
 
-func ResizeImage(opt *ResizeOption) (string, []byte, error) {
+func ResizeImage(opt *ResizeOption) (ext string, resizedImgBytes []byte, err error) {
 	if opt == nil {
 		return "", nil, fmt.Errorf("resize option is nil")
 	}
@@ -54,11 +52,6 @@ func ResizeImage(opt *ResizeOption) (string, []byte, error) {
 		} else if err != io.EOF {
 			return ext, nil, fmt.Errorf("decode error: %v", err)
 		}
-	}
-	if opt.Ext == "" {
-		opt.Ext = ext
-	} else {
-		opt.Ext = strings.TrimSuffix(opt.Ext, ".")
 	}
 	// Calculate new dimensions while preserving aspect ratio
 	originalWidth, originalHeight := img.Bounds().Dx(), img.Bounds().Dy()
@@ -84,7 +77,7 @@ func ResizeImage(opt *ResizeOption) (string, []byte, error) {
 
 	// Encode the resized image back to JPEG
 	var out bytes.Buffer
-	switch opt.Ext {
+	switch ext {
 	case "png":
 		err = png.Encode(&out, resizedImg)
 	case "jpg", "jpeg":
@@ -96,18 +89,18 @@ func ResizeImage(opt *ResizeOption) (string, []byte, error) {
 	case "tiff", "tif":
 		err = tiff.Encode(&out, resizedImg, nil)
 	default:
-		err = fmt.Errorf("encode error: Unsupported image type %s", opt.Ext)
+		err = fmt.Errorf("unsupported image type %s", ext)
 
 	}
 	if err != nil {
 		var bbr []byte
 		_, errR := opt.ImageToResize.Read(bbr)
 		if errR == nil {
-			return opt.Ext, bbr, err
+			return ext, bbr, err
 		} else if errR != io.EOF {
-			return opt.Ext, nil, err
+			return ext, nil, err
 		}
 	}
 
-	return opt.Ext, out.Bytes(), nil
+	return ext, out.Bytes(), nil
 }
