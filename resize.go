@@ -2,6 +2,8 @@ package kava
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"image"
 	"image/gif"
@@ -29,6 +31,17 @@ type ResizeOption struct {
 	Quality       Quality
 }
 
+func HashReader(reader io.ReadSeeker) string {
+	var buf bytes.Buffer
+	teeReader := io.TeeReader(reader, &buf)
+	hasher := sha1.New()
+	io.Copy(hasher, teeReader)
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	// Rewind the original reader to the beginning for further use
+	reader.Seek(0, io.SeekStart)
+	return hash
+}
+
 func ResizeImage(opt *ResizeOption) (ext string, resizedImgBytes []byte, err error) {
 	if opt == nil {
 		return "", nil, fmt.Errorf("resize option is nil")
@@ -46,12 +59,11 @@ func ResizeImage(opt *ResizeOption) (ext string, resizedImgBytes []byte, err err
 	img, ext, err := image.Decode(opt.ImageToResize)
 	if err != nil {
 		var bbr []byte
-		_, err := opt.ImageToResize.Read(bbr)
-		if err == nil {
+		_, errR := opt.ImageToResize.Read(bbr)
+		if errR == nil {
 			return ext, bbr, fmt.Errorf("decode error: %v", err)
-		} else if err != io.EOF {
-			return ext, nil, fmt.Errorf("decode error: %v", err)
 		}
+		return ext, nil, fmt.Errorf("decode error: %v", err)
 	}
 	// Calculate new dimensions while preserving aspect ratio
 	originalWidth, originalHeight := img.Bounds().Dx(), img.Bounds().Dy()
@@ -97,9 +109,8 @@ func ResizeImage(opt *ResizeOption) (ext string, resizedImgBytes []byte, err err
 		_, errR := opt.ImageToResize.Read(bbr)
 		if errR == nil {
 			return ext, bbr, err
-		} else if errR != io.EOF {
-			return ext, nil, err
 		}
+		return ext, nil, err
 	}
 
 	return ext, out.Bytes(), nil
