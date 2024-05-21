@@ -31,12 +31,12 @@ type ResizeOption struct {
 	Ext           string
 }
 
-func ResizeImage(opt *ResizeOption) ([]byte, error) {
+func ResizeImage(opt *ResizeOption) (string, []byte, error) {
 	if opt == nil {
-		return nil, fmt.Errorf("resize option is nil")
+		return "", nil, fmt.Errorf("resize option is nil")
 	}
 	if opt.ImageToResize == nil {
-		return nil, fmt.Errorf("no image reader to resize")
+		return "", nil, fmt.Errorf("no image reader to resize")
 	}
 	if opt.ResizeWidth == 0 {
 		opt.ResizeWidth = 200
@@ -47,7 +47,13 @@ func ResizeImage(opt *ResizeOption) ([]byte, error) {
 
 	img, fname, err := image.Decode(opt.ImageToResize)
 	if err != nil {
-		return nil, fmt.Errorf("decode error: %v", err)
+		var bbr []byte
+		_, err := opt.ImageToResize.Read(bbr)
+		if err == nil {
+			return fname, bbr, fmt.Errorf("decode error: %v", err)
+		} else {
+			return fname, nil, fmt.Errorf("decode error: %v", err)
+		}
 	}
 	if opt.Ext == "" {
 		opt.Ext = filepath.Ext(fname)
@@ -88,11 +94,18 @@ func ResizeImage(opt *ResizeOption) ([]byte, error) {
 	case ".tiff", ".tif":
 		err = tiff.Encode(&out, resizedImg, nil)
 	default:
-		return nil, fmt.Errorf("encode error: Unsupported image type %s", opt.Ext)
+		err = fmt.Errorf("encode error: Unsupported image type %s", opt.Ext)
+
 	}
 	if err != nil {
-		return nil, fmt.Errorf("encode error: %v", err)
+		var bbr []byte
+		_, err := opt.ImageToResize.Read(bbr)
+		if err == nil {
+			return fname, bbr, err
+		} else {
+			return fname, nil, err
+		}
 	}
 
-	return out.Bytes(), nil
+	return fname, out.Bytes(), nil
 }
